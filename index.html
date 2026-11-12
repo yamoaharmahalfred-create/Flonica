@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio to Text: private transcription in your browser</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--ink:#14202e;--mute:#5a6878;--line:#d3dae2;--accent:#2f5bea;--on:#fff;--soft:#e4ebfd;--bad:#b42318}
+@media (prefers-color-scheme:dark){:root{--bg:#10151c;--panel:#182029;--ink:#e7ecf2;--mute:#8f9db0;--line:#2b3644;--accent:#7ea2ff;--on:#0b1430;--soft:#1f2c4d;--bad:#ff8a7a}}
+*{box-sizing:border-box;margin:0}
+body{font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);padding:48px 20px 64px}
+main{max-width:720px;margin:0 auto}
+h1{font-size:1.9rem;line-height:1.2;margin-bottom:6px}
+.lead{color:var(--mute);margin-bottom:28px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:20px}
+.drop{display:block;border:2px dashed var(--line);border-radius:10px;padding:34px 20px;text-align:center;cursor:pointer}
+.drop:hover,.drop.over,.drop:focus-within{border-color:var(--accent);background:var(--soft)}
+.drop span{color:var(--mute);font-size:.92rem}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+.row{display:flex;gap:14px;flex-wrap:wrap;margin:20px 0}.row>div{flex:1 1 220px}
+.f{display:block;font-weight:600;font-size:.92rem;margin-bottom:6px}
+select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.btns{display:flex;gap:10px;margin-top:18px}
+button{font:inherit;font-weight:600;border-radius:8px;padding:11px 18px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+.go{flex:1;background:var(--accent);border-color:var(--accent);color:var(--on)}
+button:disabled{opacity:.45;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#prog{display:none;margin-top:20px}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+.bar i.ind{width:30%;animation:s 1.2s ease-in-out infinite alternate}
+@keyframes s{to{margin-left:70%}}
+@media (prefers-reduced-motion:reduce){.bar i.ind{animation:none;width:100%;opacity:.4}}
+.stat{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:.92rem;color:var(--mute)}
+.stat.err{color:var(--bad)}
+#res{display:none}
+.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.tools label{margin-right:auto;font-size:.92rem;color:var(--mute)}
+textarea{width:100%;height:380px;resize:vertical;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:1.05rem/1.7 Georgia,"Times New Roman",serif}
+.note{color:var(--mute);font-size:.9rem;max-width:62ch}.note p+p{margin-top:6px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Audio to text, in your browser</h1>
+  <p class="lead">Choose a recording and watch the transcript appear. Your audio is processed on this device and is never uploaded.</p>
+
+  <section class="panel">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="audio/*,video/mp4,video/webm,.mp3,.m4a,.wav,.ogg,.flac,.opus">
+      <strong id="fname">Choose an audio file or drop it here</strong><br>
+      <span id="fmeta">MP3, WAV, M4A, OGG, FLAC and more</span>
+    </label>
+
+    <div class="row">
+      <div>
+        <label class="f" for="model">Model</label>
+        <select id="model">
+          <option value="Xenova/whisper-tiny.en">Tiny, English: fastest (~40 MB)</option>
+          <option value="Xenova/whisper-base.en" selected>Base, English: good balance (~80 MB)</option>
+          <option value="Xenova/whisper-small.en">Small, English: most accurate, slow (~250 MB)</option>
+          <option value="Xenova/whisper-tiny" data-m="1">Tiny, multilingual</option>
+          <option value="Xenova/whisper-base" data-m="1">Base, multilingual</option>
+          <option value="Xenova/whisper-small" data-m="1">Small, multilingual</option>
+        </select>
+      </div>
+      <div id="lw" hidden>
+        <label class="f" for="lang">Spoken language</label>
+        <select id="lang">
+          <option value="">Detect automatically</option>
+          <option>english</option><option>french</option><option>spanish</option><option>portuguese</option>
+          <option>german</option><option>arabic</option><option>swahili</option><option>yoruba</option>
+          <option>hausa</option><option>hindi</option><option>chinese</option>
+        </select>
+      </div>
+    </div>
+
+    <label class="note"><input type="checkbox" id="vad" checked> Skip silent parts (recommended for long recordings)</label>
+
+    <div class="btns">
+      <button class="go" id="go" disabled>Transcribe</button>
+      <button id="stop" hidden>Cancel</button>
+    </div>
+
+    <div id="prog" aria-live="polite">
+      <div class="bar"><i id="bar"></i></div>
+      <div class="stat"><span id="msg"></span><span id="clock"></span></div>
+    </div>
+  </section>
+
+  <section class="panel" id="res">
+    <div class="tools">
+      <label><input type="checkbox" id="ts"> Show timestamps</label>
+      <button id="copy">Copy</button>
+      <button id="save">Download .txt</button>
+    </div>
+    <textarea id="out" readonly aria-label="Transcript"></textarea>
+  </section>
+
+  <div class="note">
+    <p>The first use of each model downloads it once (it needs internet) and your browser keeps it for next time.</p>
+    <p>This runs on your own device, so long recordings take a while and need plenty of memory. Keep this tab open and in front while it works. Chrome, Edge or Firefox on a computer work best.</p>
+  </div>
+</main>
+
+<!-- Speech engine: runs in a background worker so the page stays responsive -->
+<script type="text/plain" id="worker-src">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3';
+env.allowLocalModels = false;
+let asr = null, loaded = null;
+self.onmessage = async ({ data }) => {
+  try {
+    if (data.type === 'load') {
+      if (!asr || loaded !== data.model) {
+        asr = null;
+        asr = await pipeline('automatic-speech-recognition', data.model, {
+          dtype: 'q8',
+          progress_callback: p => self.postMessage({ type: 'progress', p })
+        });
+        loaded = data.model;
+      }
+      self.postMessage({ type: 'ready' });
+    } else if (data.type === 'run') {
+      const opts = { return_timestamps: true };
+      if (data.language) { opts.language = data.language; opts.task = 'transcribe'; }
+      const out = await asr(data.audio, opts);
+      self.postMessage({ type: 'result', text: out.text || '', chunks: out.chunks || [] });
+    }
+  } catch (e) {
+    self.postMessage({ type: 'error', message: (e && e.message) || String(e) });
+  }
+};
+</script>
+
+<script>
+const $ = id => document.getElementById(id);
+const SR = 16000;
+let file = null, worker = null, pending = null, segs = [], cancelled = false, timer = null, t0 = 0, dl = {};
+
+const fmt = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+
+function setFile(f) {
+  if (!f) return;
+  file = f; $('fname').textContent = f.name;
+  $('fmeta').textContent = (f.size / 1e6).toFixed(1) + ' MB · click to choose a different file';
+  $('go').disabled = false;
+}
+function phase(t, p, err) {
+  $('prog').style.display = 'block'; $('msg').textContent = t;
+  $('msg').parentElement.classList.toggle('err', !!err);
+  $('bar').classList.toggle('ind', p == null); $('bar').style.width = p == null ? '' : p + '%';
+}
+function busy(on) {
+  $('go').disabled = on || !file; $('stop').hidden = !on;
+  ['model', 'lang', 'file', 'vad'].forEach(i => $(i).disabled = on);
+  if (!on) $('clock').textContent = '';
+}
+function render() {
+  const a = $('out'), stick = a.scrollTop + a.clientHeight >= a.scrollHeight - 40;
+  let t = '', prev = null;
+  for (const g of segs) {
+    if ($('ts').checked) t += '[' + fmt(g.s) + '] ' + g.t + '\n';
+    else { if (prev !== null) t += g.s - prev > 2 ? '\n\n' : ' '; t += g.t; prev = g.e; }
+  }
+  a.value = t; if (stick) a.scrollTop = a.scrollHeight;
+}
+
+/* ---- audio: decode to 16 kHz mono ---- */
+async function decode(f) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const data = await f.arrayBuffer();
+  let buf;
+  try {
+    const c = new AC({ sampleRate: SR });
+    buf = await c.decodeAudioData(data.slice(0));
+    c.close();
+  } catch (e) {            // browser can't decode at 16 kHz directly: decode, then resample
+    const c = new AC();
+    const b = await c.decodeAudioData(data.slice(0));
+    c.close();
+    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(b.duration * SR)), SR);
+    const src = off.createBufferSource(); src.buffer = b; src.connect(off.destination); src.start();
+    buf = await off.startRendering();
+  }
+  const n = buf.numberOfChannels, mono = new Float32Array(buf.length);
+  for (let ch = 0; ch < n; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < mono.length; i++) mono[i] += d[i] / n;
+  }
+  return mono;
+}
+function rms(a) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]; return Math.sqrt(s / (a.length || 1)); }
+
+/* Sections are at most ~29 s (Whisper's limit is 30 s). When more audio remains, cut at the
+   quietest moment between 24 s and 29 s so words are not split in half. */
+function cutPoint(a, start) {
+  if (a.length - start <= 29 * SR) return a.length;
+  const lo = start + 24 * SR, hi = start + 29 * SR, frame = SR / 10, step = frame / 2;
+  let best = hi, bestE = Infinity;
+  for (let i = lo; i + frame <= hi; i += step) {
+    let e = 0; for (let j = i; j < i + frame; j++) e += a[j] * a[j];
+    if (e < bestE) { bestE = e; best = i + step; }
+  }
+  return Math.round(best);
+}
+
+/* ---- worker messaging ---- */
+function getWorker() {
+  if (worker) return worker;
+  const url = URL.createObjectURL(new Blob([$('worker-src').textContent], { type: 'text/javascript' }));
+  worker = new Worker(url, { type: 'module' });
+  worker.onmessage = ({ data: d }) => {
+    if (d.type === 'progress') onLoad(d.p);
+    else if (!pending) return;
+    else if (d.type === 'error') pending.rej(new Error(d.message));
+    else pending.res(d);
+  };
+  worker.onerror = () => { if (pending) pending.rej(new Error('The speech engine could not start. Check your internet connection and try again.')); };
+  return worker;
+}
+function ask(msg, transfer) {
+  return new Promise((res, rej) => { pending = { res, rej }; getWorker().postMessage(msg, transfer || []); });
+}
+function onLoad(p) {
+  if (p.status === 'progress' && p.total) {
+    dl[p.file] = { l: p.loaded, t: p.total };
+    const v = Object.values(dl), l = v.reduce((s, x) => s + x.l, 0), t = v.reduce((s, x) => s + x.t, 0);
+    phase('Downloading speech model... ' + Math.round(l / t * 100) + '%', l / t * 100);
+  } else if (p.status === 'initiate' || p.status === 'ready') phase('Loading speech model...', null);
+}
+
+/* ---- main job ---- */
+async function transcribe() {
+  if (!file) return;
+  busy(true); segs = []; cancelled = false; dl = {}; $('res').style.display = 'none'; render();
+  t0 = Date.now();
+  timer = setInterval(() => $('clock').textContent = fmt((Date.now() - t0) / 1000), 1000);
+  let audio = null, stage = 'read';
+  try {
+    phase('Reading audio... (a long file can take a minute)', null);
+    audio = await decode(file);
+    stage = 'run';
+    phase('Preparing speech model...', null);
+    await ask({ type: 'load', model: $('model').value });
+
+    const lang = $('model').selectedOptions[0].dataset.m ? $('lang').value : '';
+    const vad = $('vad').checked, total = audio.length, tr0 = Date.now();
+    let pos = 0;
+    while (pos < total && !cancelled) {
+      const end = cutPoint(audio, pos), win = audio.slice(pos, end), off = pos / SR, len = (end - pos) / SR;
+      pos = end;
+      if (!(vad && rms(win) < 0.002)) {
+        const r = await ask({ type: 'run', audio: win, language: lang }, [win.buffer]);
+        let added = 0;
+        for (const c of r.chunks) {
+          const t = (c.text || '').trim(); if (!t) continue;
+          const s = off + (c.timestamp && c.timestamp[0] || 0);
+          const e = off + (c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : len);
+          segs.push({ s, e, t }); added++;
+        }
+        if (!added && r.text.trim()) segs.push({ s: off, e: off + len, t: r.text.trim() });
+        render(); if (segs.length) $('res').style.display = 'block';
+      }
+      const p = pos / total, left = (Date.now() - tr0) * (1 - p) / p / 1000;
+      phase(cancelled ? 'Stopping...' : 'Transcribing... ' + Math.round(p * 100) + '%' + (p > 0.02 ? ' · about ' + fmt(left) + ' left' : ''), p * 100);
+    }
+    phase(cancelled ? 'Cancelled. The part transcribed so far is kept below.' : 'Done in ' + fmt((Date.now() - t0) / 1000), cancelled ? 0 : 100);
+  } catch (e) {
+    if (worker && stage === 'run') { worker.terminate(); worker = null; }
+    pending = null;
+    phase(stage === 'read'
+      ? 'This file could not be read (' + e.message + '). Try MP3, WAV, M4A or OGG, or a shorter file.'
+      : 'Failed: ' + e.message, 0, true);
+  } finally {
+    clearInterval(timer); audio = null; busy(false);
+  }
+}
+
+/* ---- controls ---- */
+$('file').onchange = e => setFile(e.target.files[0]);
+['dragenter', 'dragover'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => { if (e.dataTransfer.files[0]) { $('file').files = e.dataTransfer.files; setFile(e.dataTransfer.files[0]); } });
+$('model').onchange = () => { $('lw').hidden = !$('model').selectedOptions[0].dataset.m; };
+$('go').onclick = transcribe;
+$('stop').onclick = () => { cancelled = true; phase('Stopping after the current section...', null); };
+$('ts').onchange = render;
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('out').value); } catch (e) { $('out').select(); document.execCommand('copy'); }
+  $('copy').textContent = 'Copied'; setTimeout(() => $('copy').textContent = 'Copy', 1500);
+};
+$('save').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([$('out').value], { type: 'text/plain' }));
+  a.download = (file ? file.name.replace(/\.[^.]+$/, '') : 'transcript') + '.txt';
+  a.click(); URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>
